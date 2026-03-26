@@ -4,7 +4,7 @@ overview: Build a full-stack domain availability checker for all 1–3 character
 todos:
   - id: install-deps
     content: Install @vercel/blob and ai packages; init shadcn and add required components (table, button, input, badge, progress, dialog, select, card, scroll-area)
-    status: pending
+    status: in_progress
   - id: domain-generator
     content: Create src/lib/domain-generator.ts with getDomainAtOffset(offset) and getTotalDomains() — generates domain names algorithmically so nothing needs seeding
     status: pending
