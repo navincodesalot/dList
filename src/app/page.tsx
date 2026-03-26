@@ -1,37 +1,50 @@
-import Link from "next/link";
+"use client";
+
+import { useRef, useCallback } from "react";
+import { ScanControls } from "@/components/scan-controls";
+import { DomainTable, type DomainTableHandle } from "@/components/domain-table";
+import { ChatPanel } from "@/components/chat-panel";
+import { SettingsModal } from "@/components/settings-modal";
+import { Separator } from "@/components/ui/separator";
 
 export default function HomePage() {
+  const tableRef = useRef<DomainTableHandle>(null);
+
+  const handleResultsUpdate = useCallback(() => {
+    tableRef.current?.refresh();
+  }, []);
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-b from-[#2e026d] to-[#15162c] text-white">
-      <div className="container flex flex-col items-center justify-center gap-12 px-4 py-16">
-        <h1 className="text-5xl font-extrabold tracking-tight text-white sm:text-[5rem]">
-          Create <span className="text-[hsl(280,100%,70%)]">T3</span> App
-        </h1>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:gap-8">
-          <Link
-            className="flex max-w-xs flex-col gap-4 rounded-xl bg-white/10 p-4 text-white hover:bg-white/20"
-            href="https://create.t3.gg/en/usage/first-steps"
-            target="_blank"
-          >
-            <h3 className="text-2xl font-bold">First Steps →</h3>
-            <div className="text-lg">
-              Just the basics - Everything you need to know to set up your
-              database and authentication.
-            </div>
-          </Link>
-          <Link
-            className="flex max-w-xs flex-col gap-4 rounded-xl bg-white/10 p-4 text-white hover:bg-white/20"
-            href="https://create.t3.gg/en/introduction"
-            target="_blank"
-          >
-            <h3 className="text-2xl font-bold">Documentation →</h3>
-            <div className="text-lg">
-              Learn more about Create T3 App, the libraries it uses, and how to
-              deploy it.
-            </div>
-          </Link>
+    <div className="flex h-screen flex-col">
+      {/* Header */}
+      <header className="border-b px-6 py-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-bold tracking-tight">dList</h1>
+            <p className="text-muted-foreground text-sm">
+              Short domain availability checker
+            </p>
+          </div>
+          <SettingsModal />
+        </div>
+        <Separator className="mt-4" />
+        <div className="mt-4">
+          <ScanControls onResultsUpdate={handleResultsUpdate} />
+        </div>
+      </header>
+
+      {/* Main content */}
+      <div className="flex min-h-0 flex-1">
+        {/* Table panel */}
+        <div className="flex-1 overflow-auto p-6">
+          <DomainTable ref={tableRef} />
+        </div>
+
+        {/* Chat panel */}
+        <div className="hidden w-[380px] border-l lg:block">
+          <ChatPanel />
         </div>
       </div>
-    </main>
+    </div>
   );
 }

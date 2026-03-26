@@ -4,34 +4,34 @@ overview: Build a full-stack domain availability checker for all 1–3 character
 todos:
   - id: install-deps
     content: Install @vercel/blob and ai packages; init shadcn and add required components (table, button, input, badge, progress, dialog, select, card, scroll-area)
-    status: in_progress
+    status: completed
   - id: domain-generator
     content: Create src/lib/domain-generator.ts with getDomainAtOffset(offset) and getTotalDomains() — generates domain names algorithmically so nothing needs seeding
-    status: pending
+    status: completed
   - id: blob-helpers
     content: Create src/lib/blob.ts with typed helpers for reading/writing scan-state.json, results.json, and config.json in Vercel Blob
-    status: pending
+    status: completed
   - id: spaceship-client
     content: Create src/lib/spaceship.ts with batch availability check function (handles 20-domain batches, reads key from env or config blob)
-    status: pending
+    status: completed
   - id: scan-api
     content: Create /api/scan/batch (POST - checks next 20 domains, saves to blob), /api/scan/state (GET/POST - scan state), /api/scan/reset (POST - resets scan)
-    status: pending
+    status: completed
   - id: results-api
     content: Create /api/results route that reads results.json from Blob and returns available domains with filtering params
-    status: pending
+    status: completed
   - id: chat-api
     content: Create /api/chat route using Gemini Flash with tool calling (getDomainStats, searchAvailableDomains, getFilteredCount) that reads from results blob
-    status: pending
+    status: completed
   - id: config-api
     content: Create /api/config route for reading/writing API keys to config.json in Blob
-    status: pending
+    status: completed
   - id: ui-components
     content: Build domain-table.tsx, scan-controls.tsx, settings-modal.tsx, and chat-panel.tsx components
-    status: pending
+    status: completed
   - id: main-page
     content: Wire everything together in src/app/page.tsx with split-view layout; update layout.tsx metadata
-    status: pending
+    status: completed
 isProject: false
 ---
 
