@@ -3,7 +3,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { Badge } from "@/components/ui/badge";
 import { DEFAULT_SCAN_STATE, type ScanState } from "@/lib/types";
+import type { AvailableDomain } from "@/lib/types";
 
 function mergeScanState(data: unknown): ScanState {
   if (!data || typeof data !== "object" || !("status" in data)) {
@@ -17,20 +19,49 @@ function mergeScanState(data: unknown): ScanState {
 }
 
 const MAX_RETRIES = 5;
+/** Keep in sync with `BATCH_SIZE` in `api/scan/batch`. */
+const DOMAINS_PER_SCAN_BATCH = 20;
+const SAVE_EVERY_N_BATCHES = 50;
+const SCAN_BATCH_GAP_MS = 1100;
 
-interface ScanControlsProps {
-  /** Called after scan + results are cleared so the table can refetch once. */
-  onScanReset?: () => void;
+/** Rough round-trip time per batch: gap after each request + typical API latency. */
+function estimateRemainingScanMs(remainingBatches: number): number {
+  return remainingBatches * (SCAN_BATCH_GAP_MS + 350);
 }
 
-export function ScanControls({ onScanReset }: ScanControlsProps) {
+function formatShortDuration(ms: number): string {
+  const sec = Math.max(1, Math.round(ms / 1000));
+  if (sec < 90) return `~${sec}s`;
+  return `~${Math.ceil(sec / 60)} min`;
+}
+
+/** Browser local timezone (user's clock); includes short TZ abbreviation. */
+function formatLocalSaveTime(date = new Date()): string {
+  return date.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZoneName: "short",
+  });
+}
+
+export function ScanControls() {
   const [state, setState] = useState<ScanState | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [unsavedCount, setUnsavedCount] = useState(0);
+  const [lastSaveInfo, setLastSaveInfo] = useState<string | null>(null);
+  const [batchesSinceLastSave, setBatchesSinceLastSave] = useState(0);
   const [error, setError] = useState<string | null>(null);
+
   const scanRef = useRef(false);
   const scanLoopActiveRef = useRef(false);
   const retryCountRef = useRef(0);
+
+  const pendingDomainsRef = useRef<AvailableDomain[]>([]);
+  const localStateRef = useRef<ScanState>({ ...DEFAULT_SCAN_STATE });
+  const batchesSinceLastSaveRef = useRef(0);
 
   const fetchState = useCallback(async () => {
     try {
@@ -38,6 +69,7 @@ export function ScanControls({ onScanReset }: ScanControlsProps) {
       const raw = await res.json();
       const data = mergeScanState(raw);
       setState(data);
+      localStateRef.current = { ...data };
       return data;
     } catch {
       return null;
@@ -48,6 +80,57 @@ export function ScanControls({ onScanReset }: ScanControlsProps) {
     void fetchState();
   }, [fetchState]);
 
+  // --- beforeunload: warn if unsaved data ---
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (pendingDomainsRef.current.length > 0) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, []);
+
+  const flushToBlob = useCallback(async () => {
+    const domains = pendingDomainsRef.current;
+    const st = { ...localStateRef.current };
+    if (domains.length === 0 && !scanRef.current) {
+      await fetch("/api/scan/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domains: [], state: st }),
+      });
+      setUnsavedCount(0);
+      batchesSinceLastSaveRef.current = 0;
+      return;
+    }
+
+    const toSave = [...domains];
+    pendingDomainsRef.current = [];
+
+    setIsSaving(true);
+    try {
+      const res = await fetch("/api/scan/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domains: toSave, state: st }),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      setUnsavedCount(0);
+      batchesSinceLastSaveRef.current = 0;
+      setLastSaveInfo(
+        toSave.length > 0
+          ? `Saved ${toSave.length.toLocaleString()} available domain${toSave.length !== 1 ? "s" : ""} at ${formatLocalSaveTime()}`
+          : `Progress saved at ${formatLocalSaveTime()}`,
+      );
+    } catch {
+      pendingDomainsRef.current.push(...toSave);
+      setUnsavedCount(pendingDomainsRef.current.length);
+    } finally {
+      setIsSaving(false);
+    }
+  }, []);
+
   const runScanLoop = useCallback(async () => {
     if (scanLoopActiveRef.current) return;
     scanLoopActiveRef.current = true;
@@ -55,11 +138,19 @@ export function ScanControls({ onScanReset }: ScanControlsProps) {
     setIsScanning(true);
     setError(null);
     retryCountRef.current = 0;
+    batchesSinceLastSaveRef.current = 0;
+    setBatchesSinceLastSave(0);
 
     try {
       while (scanRef.current) {
+        const offset = localStateRef.current.offset;
+
         try {
-          const res = await fetch("/api/scan/batch", { method: "POST" });
+          const res = await fetch("/api/scan/batch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ offset }),
+          });
 
           if (res.status === 429) {
             if (retryCountRef.current >= MAX_RETRIES) {
@@ -67,7 +158,6 @@ export function ScanControls({ onScanReset }: ScanControlsProps) {
                 "Rate limited by Spaceship API — max retries reached. Try starting again later.",
               );
               scanRef.current = false;
-              void fetchState();
               break;
             }
             retryCountRef.current++;
@@ -84,7 +174,6 @@ export function ScanControls({ onScanReset }: ScanControlsProps) {
               error: string;
               retryable?: boolean;
             };
-
             if (
               data.retryable !== false &&
               retryCountRef.current < MAX_RETRIES
@@ -97,10 +186,8 @@ export function ScanControls({ onScanReset }: ScanControlsProps) {
               await new Promise((r) => setTimeout(r, backoff));
               continue;
             }
-
             setError(data.error);
             scanRef.current = false;
-            void fetchState();
             break;
           }
 
@@ -108,17 +195,52 @@ export function ScanControls({ onScanReset }: ScanControlsProps) {
           setError(null);
 
           const data = (await res.json()) as {
+            available: AvailableDomain[];
+            unavailableCount: number;
+            errorCount: number;
+            batchSize: number;
+            total: number;
             done: boolean;
-            state: ScanState;
           };
-          setState(mergeScanState(data.state));
+
+          // Accumulate in client memory
+          if (data.available.length > 0) {
+            pendingDomainsRef.current.push(...data.available);
+          }
+
+          const st = localStateRef.current;
+          st.offset += data.batchSize;
+          st.total = data.total;
+          st.availableCount += data.available.length;
+          st.unavailableCount += data.unavailableCount;
+          st.errorCount += data.errorCount;
+          st.updatedAt = new Date().toISOString();
+
+          if (data.done) {
+            st.status = "completed";
+          }
+
+          setUnsavedCount(pendingDomainsRef.current.length);
+          setState({ ...st });
+
+          batchesSinceLastSaveRef.current++;
+          setBatchesSinceLastSave(batchesSinceLastSaveRef.current);
+
+          // Periodic save or final save
+          if (
+            data.done ||
+            batchesSinceLastSaveRef.current >= SAVE_EVERY_N_BATCHES
+          ) {
+            await flushToBlob();
+            setBatchesSinceLastSave(0);
+          }
 
           if (data.done) {
             scanRef.current = false;
             break;
           }
 
-          await new Promise((r) => setTimeout(r, 1100));
+          await new Promise((r) => setTimeout(r, SCAN_BATCH_GAP_MS));
         } catch (err) {
           if (retryCountRef.current < MAX_RETRIES) {
             retryCountRef.current++;
@@ -134,11 +256,17 @@ export function ScanControls({ onScanReset }: ScanControlsProps) {
           break;
         }
       }
+
+      // Flush any remaining unsaved data when the loop ends
+      if (pendingDomainsRef.current.length > 0) {
+        await flushToBlob();
+        setBatchesSinceLastSave(0);
+      }
     } finally {
       scanLoopActiveRef.current = false;
       setIsScanning(false);
     }
-  }, [fetchState]);
+  }, [flushToBlob]);
 
   const handleStart = async () => {
     setIsLoading(true);
@@ -155,25 +283,15 @@ export function ScanControls({ onScanReset }: ScanControlsProps) {
         setError(err.error ?? "Failed to start scan");
         return;
       }
-      setState(mergeScanState(raw));
+      const s = mergeScanState(raw);
+      setState(s);
+      localStateRef.current = { ...s };
+      pendingDomainsRef.current = [];
+      setUnsavedCount(0);
+      setLastSaveInfo(null);
       void runScanLoop();
     } catch {
       setError("Failed to start scan");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleReset = async () => {
-    scanRef.current = false;
-    setIsLoading(true);
-    try {
-      const res = await fetch("/api/scan/reset", { method: "POST" });
-      const raw = await res.json();
-      setState(mergeScanState(raw));
-      onScanReset?.();
-    } catch {
-      setError("Failed to reset scan");
     } finally {
       setIsLoading(false);
     }
@@ -198,6 +316,15 @@ export function ScanControls({ onScanReset }: ScanControlsProps) {
       ? (state.availableCount / state.offset) * 100
       : null;
 
+  const batchesUntilNextSave = Math.max(
+    1,
+    SAVE_EVERY_N_BATCHES - batchesSinceLastSave,
+  );
+  const domainsUntilNextSave = batchesUntilNextSave * DOMAINS_PER_SCAN_BATCH;
+  const nextSaveEta = formatShortDuration(
+    estimateRemainingScanMs(batchesUntilNextSave),
+  );
+
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
@@ -208,15 +335,78 @@ export function ScanControls({ onScanReset }: ScanControlsProps) {
         >
           {state?.status === "completed" ? "Completed" : "Start Scan"}
         </Button>
-        <Button
-          onClick={handleReset}
-          disabled={isLoading || isScanning}
-          variant="outline"
-          size="sm"
-        >
-          Reset
-        </Button>
+
+        {/* Save status */}
+        {(isSaving || unsavedCount > 0) && (
+          <div className="flex items-center gap-2">
+            {isSaving && (
+              <Badge
+                variant="secondary"
+                className="animate-pulse text-xs font-normal"
+              >
+                Saving…
+              </Badge>
+            )}
+            {!isSaving && unsavedCount > 0 && (
+              <Badge
+                variant="outline"
+                className="text-xs font-normal"
+                title="Only available hits are persisted to blob; names that are not available are not stored."
+              >
+                {unsavedCount.toLocaleString()} unsaved available{" "}
+                {unsavedCount === 1 ? "domain" : "domains"}
+              </Badge>
+            )}
+          </div>
+        )}
+        {lastSaveInfo && (
+          <span
+            className="text-muted-foreground text-xs"
+            title="Time is shown in your device's local timezone."
+          >
+            {lastSaveInfo}
+          </span>
+        )}
       </div>
+
+      <p className="text-muted-foreground text-xs leading-relaxed">
+        {isSaving ? (
+          <>
+            Writing scan progress and new available domains to storage (please
+            keep this tab open until this finishes).
+          </>
+        ) : isScanning ? (
+          <>
+            Next save in about{" "}
+            <span className="text-foreground tabular-nums">
+              {batchesUntilNextSave}
+            </span>{" "}
+            batches (
+            <span className="tabular-nums">
+              {domainsUntilNextSave.toLocaleString()}
+            </span>{" "}
+            name checks, {nextSaveEta} at the current pace). While scanning,
+            saves run every{" "}
+            <span className="tabular-nums">{SAVE_EVERY_N_BATCHES}</span> batches
+            (~
+            <span className="tabular-nums">
+              {(SAVE_EVERY_N_BATCHES * DOMAINS_PER_SCAN_BATCH).toLocaleString()}
+            </span>{" "}
+            names), and again when the scan completes.
+          </>
+        ) : (
+          <>
+            While scanning, results save about every{" "}
+            <span className="tabular-nums">{SAVE_EVERY_N_BATCHES}</span> batches
+            (~
+            <span className="tabular-nums">
+              {(SAVE_EVERY_N_BATCHES * DOMAINS_PER_SCAN_BATCH).toLocaleString()}
+            </span>{" "}
+            names checked, on the order of a minute at the usual rate), plus a
+            final save when the run finishes.
+          </>
+        )}
+      </p>
 
       <div className="space-y-1">
         <Progress value={progress} className="h-2" />
@@ -230,7 +420,10 @@ export function ScanControls({ onScanReset }: ScanControlsProps) {
             {state && (
               <>
                 {scannedPct !== null && (
-                  <span className="tabular-nums" title="Share of the full list checked so far">
+                  <span
+                    className="tabular-nums"
+                    title="Share of the full list checked so far"
+                  >
                     {scannedPct.toFixed(1)}% scanned
                   </span>
                 )}
@@ -248,7 +441,7 @@ export function ScanControls({ onScanReset }: ScanControlsProps) {
                 {notAvailableCount > 0 && (
                   <span
                     className="text-muted-foreground"
-                    title="Registered, taken, or not returned as available by the API (includes explicit unavailable and other non-available results)"
+                    title="Registered, taken, or not returned as available by the API"
                   >
                     {notAvailableCount.toLocaleString()} not available
                   </span>

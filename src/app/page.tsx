@@ -1,19 +1,12 @@
 "use client";
 
-import { useRef, useCallback } from "react";
 import { ScanControls } from "@/components/scan-controls";
-import { DomainTable, type DomainTableHandle } from "@/components/domain-table";
+import { DomainTable } from "@/components/domain-table";
 import { ChatPanel } from "@/components/chat-panel";
 import { SettingsModal } from "@/components/settings-modal";
 import { ModeToggle } from "@/components/mode-toggle";
 import { Separator } from "@/components/ui/separator";
 export default function HomePage() {
-  const tableRef = useRef<DomainTableHandle>(null);
-
-  const handleScanReset = useCallback(() => {
-    tableRef.current?.refresh();
-  }, []);
-
   return (
     <div className="flex h-screen flex-col">
       {/* Header */}
@@ -32,7 +25,7 @@ export default function HomePage() {
         </div>
         <Separator className="mt-4" />
         <div className="mt-4">
-          <ScanControls onScanReset={handleScanReset} />
+          <ScanControls />
         </div>
       </header>
 
@@ -40,7 +33,7 @@ export default function HomePage() {
       <div className="flex min-h-0 flex-1">
         {/* Table panel */}
         <div className="flex-1 overflow-auto p-6">
-          <DomainTable ref={tableRef} />
+          <DomainTable />
         </div>
 
         {/* Chat panel */}
