@@ -5,14 +5,23 @@ import { ScanControls } from "@/components/scan-controls";
 import { DomainTable, type DomainTableHandle } from "@/components/domain-table";
 import { ChatPanel } from "@/components/chat-panel";
 import { SettingsModal } from "@/components/settings-modal";
+import { ModeToggle } from "@/components/mode-toggle";
 import { Separator } from "@/components/ui/separator";
+import type { AvailableDomain } from "@/lib/types";
 
 export default function HomePage() {
   const tableRef = useRef<DomainTableHandle>(null);
 
-  const handleResultsUpdate = useCallback(() => {
-    tableRef.current?.refresh();
-  }, []);
+  const handleResultsUpdate = useCallback(
+    (newDomains?: AvailableDomain[]) => {
+      if (newDomains && newDomains.length > 0) {
+        tableRef.current?.mergeNewDomains(newDomains);
+      } else {
+        tableRef.current?.refresh();
+      }
+    },
+    [],
+  );
 
   return (
     <div className="flex h-screen flex-col">
@@ -25,7 +34,10 @@ export default function HomePage() {
               Short domain availability checker
             </p>
           </div>
-          <SettingsModal />
+          <div className="flex items-center gap-2">
+            <ModeToggle />
+            <SettingsModal />
+          </div>
         </div>
         <Separator className="mt-4" />
         <div className="mt-4">

@@ -1,4 +1,4 @@
-import { put, list, del } from "@vercel/blob";
+import { put, del, get } from "@vercel/blob";
 import type { ScanState, AvailableDomain, AppConfig } from "./types";
 import { DEFAULT_SCAN_STATE } from "./types";
 
@@ -6,32 +6,57 @@ const SCAN_STATE_KEY = "scan-state.json";
 const RESULTS_KEY = "results.json";
 const CONFIG_KEY = "config.json";
 
-async function findBlob(
-  prefix: string,
-): Promise<{ url: string; pathname: string } | null> {
-  const { blobs } = await list({ prefix });
-  return blobs[0] ?? null;
+/** Thrown after retries so callers don't treat a transient Blob failure as "missing data". */
+export class BlobReadError extends Error {
+  constructor(message = "Failed to read from blob storage") {
+    super(message);
+    this.name = "BlobReadError";
+  }
 }
 
-async function readJson<T>(prefix: string): Promise<T | null> {
-  const blob = await findBlob(prefix);
-  if (!blob) return null;
+async function readJson<T>(key: string): Promise<T | null> {
+  let lastError: unknown;
+  /** After any thrown/read failure, `get === null` may be transient — don't treat as "no blob". */
+  let hadRecoverableFailure = false;
 
-  const res = await fetch(blob.url);
-  if (!res.ok) return null;
-  return (await res.json()) as T;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      let result = await get(key, { access: "private" });
+
+      if (result === null) {
+        if (!hadRecoverableFailure) return null;
+        continue;
+      }
+
+      if (result.statusCode === 304) {
+        result = await get(key, { access: "private", useCache: false });
+        if (result?.statusCode === 200 && result.stream != null) {
+          const text = await new Response(result.stream).text();
+          return JSON.parse(text) as T;
+        }
+      } else if (result.statusCode === 200 && result.stream != null) {
+        const text = await new Response(result.stream).text();
+        return JSON.parse(text) as T;
+      }
+    } catch (e) {
+      lastError = e;
+      hadRecoverableFailure = true;
+    }
+
+    await new Promise((r) => setTimeout(r, 40 * (attempt + 1)));
+  }
+
+  throw lastError instanceof Error
+    ? new BlobReadError(lastError.message)
+    : new BlobReadError();
 }
 
 async function writeJson<T>(key: string, data: T): Promise<string> {
-  const existing = await findBlob(key);
-  if (existing) {
-    await del(existing.url);
-  }
-
   const blob = await put(key, JSON.stringify(data), {
-    access: "public",
+    access: "private",
     contentType: "application/json",
     addRandomSuffix: false,
+    allowOverwrite: true,
   });
   return blob.url;
 }
@@ -82,7 +107,10 @@ export async function setConfig(config: AppConfig): Promise<void> {
 export async function resetAll(): Promise<void> {
   const keys = [SCAN_STATE_KEY, RESULTS_KEY];
   for (const key of keys) {
-    const blob = await findBlob(key);
-    if (blob) await del(blob.url);
+    try {
+      await del(key);
+    } catch {
+      // ignore if not found
+    }
   }
 }

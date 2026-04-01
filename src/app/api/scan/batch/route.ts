@@ -8,15 +8,28 @@ const BATCH_SIZE = 20;
 export async function POST() {
   try {
     const state = await getScanState();
+    const total = getTotalDomains();
+
+    if (state.status === "completed") {
+      if (state.total !== total) {
+        state.total = total;
+        await setScanState(state);
+      }
+      return NextResponse.json({ done: true, state });
+    }
 
     if (state.status !== "running") {
       return NextResponse.json(
-        { error: "Scan is not running" },
+        {
+          error:
+            state.status === "paused"
+              ? "Scan is paused"
+              : "Scan is not running",
+          retryable: false,
+        },
         { status: 400 },
       );
     }
-
-    const total = getTotalDomains();
     if (state.offset >= total) {
       state.status = "completed";
       state.updatedAt = new Date().toISOString();
@@ -50,6 +63,7 @@ export async function POST() {
       done: state.offset >= total,
       batchChecked: batch.length,
       batchAvailable: available.length,
+      newDomains: available,
       state,
     });
   } catch (error) {
@@ -65,6 +79,7 @@ export async function POST() {
       {
         error:
           error instanceof Error ? error.message : "Unknown error occurred",
+        retryable: true,
       },
       { status: 500 },
     );

@@ -4,6 +4,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useRef,
   forwardRef,
   useImperativeHandle,
 } from "react";
@@ -32,22 +33,40 @@ interface ResultsResponse {
   total: number;
 }
 
+/** One row per FQDN; if the API or blob has duplicates, keep the latest check. */
+function dedupeByDomain(domains: AvailableDomain[]): AvailableDomain[] {
+  const map = new Map<string, AvailableDomain>();
+  for (const d of domains) {
+    const cur = map.get(d.domain);
+    if (!cur || d.checkedAt > cur.checkedAt) map.set(d.domain, d);
+  }
+  return [...map.values()];
+}
+
 export interface DomainTableHandle {
   refresh: () => void;
+  mergeNewDomains: (newDomains: AvailableDomain[]) => void;
 }
 
 export const DomainTable = forwardRef<DomainTableHandle>(
   function DomainTable(_props, ref) {
     const [domains, setDomains] = useState<AvailableDomain[]>([]);
-    const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(false);
 
     const [tldFilter, setTldFilter] = useState("all");
     const [lengthFilter, setLengthFilter] = useState("all");
     const [premiumFilter, setPremiumFilter] = useState("all");
     const [search, setSearch] = useState("");
+    const [debouncedSearch, setDebouncedSearch] = useState("");
     const [sortBy, setSortBy] = useState("domain");
     const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+    const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+    useEffect(() => {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => setDebouncedSearch(search), 250);
+      return () => clearTimeout(debounceRef.current);
+    }, [search]);
 
     const fetchResults = useCallback(async () => {
       setLoading(true);
@@ -56,26 +75,77 @@ export const DomainTable = forwardRef<DomainTableHandle>(
         if (tldFilter !== "all") params.set("tld", tldFilter);
         if (lengthFilter !== "all") params.set("length", lengthFilter);
         if (premiumFilter !== "all") params.set("premium", premiumFilter);
-        if (search) params.set("search", search);
+        if (debouncedSearch) params.set("search", debouncedSearch);
         params.set("sortBy", sortBy);
         params.set("sortDir", sortDir);
 
         const res = await fetch(`/api/results?${params.toString()}`);
         const data = (await res.json()) as ResultsResponse;
-        setDomains(data.domains);
-        setTotal(data.total);
+        setDomains(dedupeByDomain(data.domains));
       } catch {
         // ignore
       }
       setLoading(false);
-    }, [tldFilter, lengthFilter, premiumFilter, search, sortBy, sortDir]);
+    }, [tldFilter, lengthFilter, premiumFilter, debouncedSearch, sortBy, sortDir]);
 
     useEffect(() => {
       void fetchResults();
     }, [fetchResults]);
 
+    const mergeNewDomains = useCallback(
+      (newDomains: AvailableDomain[]) => {
+        setDomains((prev) => {
+          const seen = new Set(prev.map((d) => d.domain));
+          const filtered: AvailableDomain[] = [];
+          for (const d of newDomains) {
+            if (seen.has(d.domain)) continue;
+            if (tldFilter !== "all" && d.tld !== tldFilter) continue;
+            if (
+              lengthFilter !== "all" &&
+              d.length !== parseInt(lengthFilter, 10)
+            )
+              continue;
+            if (premiumFilter === "yes" && !d.isPremium) continue;
+            if (premiumFilter === "no" && d.isPremium) continue;
+            if (
+              debouncedSearch &&
+              !d.domain.toLowerCase().includes(debouncedSearch.toLowerCase())
+            )
+              continue;
+            seen.add(d.domain);
+            filtered.push(d);
+          }
+          if (filtered.length === 0) return prev;
+          const merged = dedupeByDomain([...prev, ...filtered]);
+          merged.sort((a, b) => {
+            let cmp = 0;
+            switch (sortBy) {
+              case "domain":
+                cmp = a.domain.localeCompare(b.domain);
+                break;
+              case "tld":
+                cmp = a.tld.localeCompare(b.tld);
+                break;
+              case "length":
+                cmp = a.length - b.length;
+                break;
+              case "price":
+                cmp = (a.registerPrice ?? 0) - (b.registerPrice ?? 0);
+                break;
+              default:
+                cmp = a.domain.localeCompare(b.domain);
+            }
+            return sortDir === "desc" ? -cmp : cmp;
+          });
+          return merged;
+        });
+      },
+      [tldFilter, lengthFilter, premiumFilter, debouncedSearch, sortBy, sortDir],
+    );
+
     useImperativeHandle(ref, () => ({
       refresh: () => void fetchResults(),
+      mergeNewDomains,
     }));
 
     const toggleSort = (col: string) => {
@@ -151,7 +221,7 @@ export const DomainTable = forwardRef<DomainTableHandle>(
             Refresh
           </Button>
           <span className="text-muted-foreground ml-auto text-sm">
-            {total} domain{total !== 1 && "s"}
+            {domains.length} domain{domains.length !== 1 && "s"}
           </span>
         </div>
 
