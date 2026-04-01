@@ -3,6 +3,7 @@
 import {
   useState,
   useEffect,
+  useLayoutEffect,
   useCallback,
   useRef,
   forwardRef,
@@ -26,31 +27,56 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
 import type { AvailableDomain } from "@/lib/types";
 
 interface ResultsResponse {
   domains: AvailableDomain[];
   total: number;
-}
-
-/** One row per FQDN; if the API or blob has duplicates, keep the latest check. */
-function dedupeByDomain(domains: AvailableDomain[]): AvailableDomain[] {
-  const map = new Map<string, AvailableDomain>();
-  for (const d of domains) {
-    const cur = map.get(d.domain);
-    if (!cur || d.checkedAt > cur.checkedAt) map.set(d.domain, d);
-  }
-  return [...map.values()];
+  page: number;
+  pageSize: number;
+  totalPages: number;
 }
 
 export interface DomainTableHandle {
   refresh: () => void;
-  mergeNewDomains: (newDomains: AvailableDomain[]) => void;
+}
+
+/** Page numbers + ellipsis for large page counts (shadcn-style). */
+function getPaginationRange(
+  current: number,
+  total: number,
+): (number | "ellipsis")[] {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  const delta = 2;
+  const range: (number | "ellipsis")[] = [];
+  range.push(1);
+  if (current > delta + 2) range.push("ellipsis");
+  const start = Math.max(2, current - delta);
+  const end = Math.min(total - 1, current + delta);
+  for (let i = start; i <= end; i++) range.push(i);
+  if (current < total - delta - 1) range.push("ellipsis");
+  range.push(total);
+  return range;
 }
 
 export const DomainTable = forwardRef<DomainTableHandle>(
   function DomainTable(_props, ref) {
     const [domains, setDomains] = useState<AvailableDomain[]>([]);
+    const [total, setTotal] = useState(0);
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState(25);
+    const [totalPages, setTotalPages] = useState(1);
     const [loading, setLoading] = useState(false);
 
     const [tldFilter, setTldFilter] = useState("all");
@@ -68,6 +94,10 @@ export const DomainTable = forwardRef<DomainTableHandle>(
       return () => clearTimeout(debounceRef.current);
     }, [search]);
 
+    useLayoutEffect(() => {
+      setPage(1);
+    }, [tldFilter, lengthFilter, premiumFilter, debouncedSearch, sortBy, sortDir]);
+
     const fetchResults = useCallback(async () => {
       setLoading(true);
       try {
@@ -78,75 +108,41 @@ export const DomainTable = forwardRef<DomainTableHandle>(
         if (debouncedSearch) params.set("search", debouncedSearch);
         params.set("sortBy", sortBy);
         params.set("sortDir", sortDir);
+        params.set("page", String(page));
+        params.set("pageSize", String(pageSize));
 
         const res = await fetch(`/api/results?${params.toString()}`);
         const data = (await res.json()) as ResultsResponse;
-        setDomains(dedupeByDomain(data.domains));
+        setDomains(data.domains);
+        setTotal(data.total);
+        setPage(data.page);
+        setTotalPages(data.totalPages);
       } catch {
         // ignore
       }
       setLoading(false);
-    }, [tldFilter, lengthFilter, premiumFilter, debouncedSearch, sortBy, sortDir]);
+    }, [
+      tldFilter,
+      lengthFilter,
+      premiumFilter,
+      debouncedSearch,
+      sortBy,
+      sortDir,
+      page,
+      pageSize,
+    ]);
 
     useEffect(() => {
       void fetchResults();
     }, [fetchResults]);
 
-    const mergeNewDomains = useCallback(
-      (newDomains: AvailableDomain[]) => {
-        setDomains((prev) => {
-          const seen = new Set(prev.map((d) => d.domain));
-          const filtered: AvailableDomain[] = [];
-          for (const d of newDomains) {
-            if (seen.has(d.domain)) continue;
-            if (tldFilter !== "all" && d.tld !== tldFilter) continue;
-            if (
-              lengthFilter !== "all" &&
-              d.length !== parseInt(lengthFilter, 10)
-            )
-              continue;
-            if (premiumFilter === "yes" && !d.isPremium) continue;
-            if (premiumFilter === "no" && d.isPremium) continue;
-            if (
-              debouncedSearch &&
-              !d.domain.toLowerCase().includes(debouncedSearch.toLowerCase())
-            )
-              continue;
-            seen.add(d.domain);
-            filtered.push(d);
-          }
-          if (filtered.length === 0) return prev;
-          const merged = dedupeByDomain([...prev, ...filtered]);
-          merged.sort((a, b) => {
-            let cmp = 0;
-            switch (sortBy) {
-              case "domain":
-                cmp = a.domain.localeCompare(b.domain);
-                break;
-              case "tld":
-                cmp = a.tld.localeCompare(b.tld);
-                break;
-              case "length":
-                cmp = a.length - b.length;
-                break;
-              case "price":
-                cmp = (a.registerPrice ?? 0) - (b.registerPrice ?? 0);
-                break;
-              default:
-                cmp = a.domain.localeCompare(b.domain);
-            }
-            return sortDir === "desc" ? -cmp : cmp;
-          });
-          return merged;
-        });
-      },
-      [tldFilter, lengthFilter, premiumFilter, debouncedSearch, sortBy, sortDir],
+    useImperativeHandle(
+      ref,
+      () => ({
+        refresh: () => void fetchResults(),
+      }),
+      [fetchResults],
     );
-
-    useImperativeHandle(ref, () => ({
-      refresh: () => void fetchResults(),
-      mergeNewDomains,
-    }));
 
     const toggleSort = (col: string) => {
       if (sortBy === col) {
@@ -166,6 +162,10 @@ export const DomainTable = forwardRef<DomainTableHandle>(
       (setter: (v: string) => void) => (value: string | null) => {
         if (value !== null) setter(value);
       };
+
+    const rangeStart = total === 0 ? 0 : (page - 1) * pageSize + 1;
+    const rangeEnd = Math.min(page * pageSize, total);
+    const pageItems = getPaginationRange(page, totalPages);
 
     return (
       <div className="space-y-4">
@@ -217,11 +217,28 @@ export const DomainTable = forwardRef<DomainTableHandle>(
               <SelectItem value="no">Standard</SelectItem>
             </SelectContent>
           </Select>
+          <Select
+            value={String(pageSize)}
+            onValueChange={(v) => {
+              setPageSize(Number(v));
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="w-[130px]">
+              <SelectValue placeholder="Rows" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="10">10 / page</SelectItem>
+              <SelectItem value="25">25 / page</SelectItem>
+              <SelectItem value="50">50 / page</SelectItem>
+              <SelectItem value="100">100 / page</SelectItem>
+            </SelectContent>
+          </Select>
           <Button variant="ghost" size="sm" onClick={() => void fetchResults()}>
             Refresh
           </Button>
           <span className="text-muted-foreground ml-auto text-sm">
-            {domains.length} domain{domains.length !== 1 && "s"}
+            {total.toLocaleString()} domain{total !== 1 && "s"}
           </span>
         </div>
 
@@ -302,6 +319,52 @@ export const DomainTable = forwardRef<DomainTableHandle>(
             </TableBody>
           </Table>
         </div>
+
+        {total > 0 && (
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-muted-foreground text-sm">
+              Showing {rangeStart.toLocaleString()}–{rangeEnd.toLocaleString()}{" "}
+              of {total.toLocaleString()}
+            </p>
+            <Pagination className="mx-0 w-full justify-end sm:w-auto">
+              <PaginationContent className="flex-wrap justify-end">
+                <PaginationItem>
+                  <PaginationPrevious
+                    disabled={loading || page <= 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  />
+                </PaginationItem>
+                {pageItems.map((item, i) =>
+                  item === "ellipsis" ? (
+                    <PaginationItem key={`e-${i}`}>
+                      <PaginationEllipsis />
+                    </PaginationItem>
+                  ) : (
+                    <PaginationItem key={item}>
+                      <PaginationLink
+                        size="sm"
+                        className="min-w-9"
+                        isActive={page === item}
+                        onClick={() => setPage(item)}
+                        aria-label={`Page ${item}`}
+                      >
+                        {item}
+                      </PaginationLink>
+                    </PaginationItem>
+                  ),
+                )}
+                <PaginationItem>
+                  <PaginationNext
+                    disabled={loading || page >= totalPages}
+                    onClick={() =>
+                      setPage((p) => Math.min(totalPages, p + 1))
+                    }
+                  />
+                </PaginationItem>
+              </PaginationContent>
+            </Pagination>
+          </div>
+        )}
       </div>
     );
   },

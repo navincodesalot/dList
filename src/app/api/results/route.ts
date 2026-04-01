@@ -1,5 +1,15 @@
 import { NextResponse } from "next/server";
 import { getResults } from "@/lib/blob";
+import type { AvailableDomain } from "@/lib/types";
+
+function dedupeByDomain(domains: AvailableDomain[]): AvailableDomain[] {
+  const map = new Map<string, AvailableDomain>();
+  for (const d of domains) {
+    const cur = map.get(d.domain);
+    if (!cur || d.checkedAt > cur.checkedAt) map.set(d.domain, d);
+  }
+  return [...map.values()];
+}
 
 export async function GET(request: Request) {
   try {
@@ -11,7 +21,15 @@ export async function GET(request: Request) {
     const sortBy = searchParams.get("sortBy") ?? "domain";
     const sortDir = searchParams.get("sortDir") ?? "asc";
 
-    let results = await getResults();
+    const pageRaw = parseInt(searchParams.get("page") ?? "1", 10);
+    const pageSizeRaw = parseInt(searchParams.get("pageSize") ?? "25", 10);
+    const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+    const pageSize = Math.min(
+      100,
+      Math.max(10, Number.isFinite(pageSizeRaw) ? pageSizeRaw : 25),
+    );
+
+    let results = dedupeByDomain(await getResults());
 
     if (tld) {
       results = results.filter((d) => d.tld === tld);
@@ -50,9 +68,18 @@ export async function GET(request: Request) {
       return sortDir === "desc" ? -cmp : cmp;
     });
 
+    const total = results.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const safePage = Math.min(page, totalPages);
+    const start = (safePage - 1) * pageSize;
+    const domains = results.slice(start, start + pageSize);
+
     return NextResponse.json({
-      domains: results,
-      total: results.length,
+      domains,
+      total,
+      page: safePage,
+      pageSize,
+      totalPages,
     });
   } catch (error) {
     console.error("Get results error:", error);

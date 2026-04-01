@@ -1,22 +1,29 @@
 import { google } from "@ai-sdk/google";
-import { streamText, convertToModelMessages, type UIMessage } from "ai";
+import {
+  streamText,
+  convertToModelMessages,
+  stepCountIs,
+  type UIMessage,
+} from "ai";
 import { z } from "zod";
 import { getResults } from "@/lib/blob";
 import { getScanState } from "@/lib/blob";
 
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 export async function POST(req: Request) {
   const { messages } = (await req.json()) as { messages: UIMessage[] };
 
   const result = streamText({
-    model: google("gemini-2.0-flash"),
+    model: google("gemini-3-flash-preview"),
     system: `You are a helpful assistant for dList, a domain availability checker. 
 You help users explore and analyze domain availability data. 
 You have access to tools that let you query the scan results and statistics.
 When users ask about available domains, use the tools to look up actual data.
+After each tool returns, always write a short natural-language answer for the user (do not stop with only tool calls).
 Be concise but informative. Format domain names in backticks when listing them.`,
     messages: await convertToModelMessages(messages),
+    stopWhen: stepCountIs(12),
     tools: {
       getDomainStats: {
         description:

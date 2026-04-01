@@ -21,20 +21,14 @@ async function readJson<T>(key: string): Promise<T | null> {
 
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      let result = await get(key, { access: "private" });
+      const result = await get(key, { access: "private", useCache: false });
 
       if (result === null) {
         if (!hadRecoverableFailure) return null;
         continue;
       }
 
-      if (result.statusCode === 304) {
-        result = await get(key, { access: "private", useCache: false });
-        if (result?.statusCode === 200 && result.stream != null) {
-          const text = await new Response(result.stream).text();
-          return JSON.parse(text) as T;
-        }
-      } else if (result.statusCode === 200 && result.stream != null) {
+      if (result.statusCode === 200 && result.stream != null) {
         const text = await new Response(result.stream).text();
         return JSON.parse(text) as T;
       }

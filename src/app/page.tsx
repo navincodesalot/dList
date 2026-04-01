@@ -7,21 +7,12 @@ import { ChatPanel } from "@/components/chat-panel";
 import { SettingsModal } from "@/components/settings-modal";
 import { ModeToggle } from "@/components/mode-toggle";
 import { Separator } from "@/components/ui/separator";
-import type { AvailableDomain } from "@/lib/types";
-
 export default function HomePage() {
   const tableRef = useRef<DomainTableHandle>(null);
 
-  const handleResultsUpdate = useCallback(
-    (newDomains?: AvailableDomain[]) => {
-      if (newDomains && newDomains.length > 0) {
-        tableRef.current?.mergeNewDomains(newDomains);
-      } else {
-        tableRef.current?.refresh();
-      }
-    },
-    [],
-  );
+  const handleScanReset = useCallback(() => {
+    tableRef.current?.refresh();
+  }, []);
 
   return (
     <div className="flex h-screen flex-col">
@@ -41,7 +32,7 @@ export default function HomePage() {
         </div>
         <Separator className="mt-4" />
         <div className="mt-4">
-          <ScanControls onResultsUpdate={handleResultsUpdate} />
+          <ScanControls onScanReset={handleScanReset} />
         </div>
       </header>
 

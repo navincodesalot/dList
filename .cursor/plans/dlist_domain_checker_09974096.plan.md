@@ -43,7 +43,7 @@ isProject: false
 - **Algorithmic domain generation (no seeding):** Domain names are derived mathematically from an integer offset (`getDomainAtOffset(n)`). Nothing stored upfront — scan state just tracks the current offset.
 - **Frontend-driven scan loop (solves Vercel timeout):** The browser calls `/api/scan/batch` every ~1 second. Each serverless function call is short (checks 20 domains, saves to Blob, returns). No single function runs for more than ~2 seconds, so Vercel's timeout is never an issue even for the 80-minute full scan.
 - **Available-only results storage:** Only available domains are written to `results.json`. Unavailable results are discarded after counting. This keeps the Blob payload small.
-- **AI chat uses tool calling:** Gemini Flash (**_gemini-3-flash-preview)_** reads `results.json` from Blob via tools (`getDomainStats`, `searchAvailableDomains`, `getFilteredCount`).
+- **AI chat uses tool calling:** Gemini Flash (***gemini-3-flash-preview)*** reads `results.json` from Blob via tools (`getDomainStats`, `searchAvailableDomains`, `getFilteredCount`).
 - **API key storage:** Env vars (`SPACESHIP_API_KEY` / `SPACESHIP_API_SECRET`) are primary. Settings modal writes to `config.json` in Blob as fallback — no file editing needed.
 
 ## Domain Count
@@ -83,6 +83,8 @@ flowchart TD
   ChatAPI --> Gemini[Gemini Flash]
   ConfigAPI --> BlobStore
 ```
+
+
 
 ## File Structure
 
@@ -156,3 +158,4 @@ SPACESHIP_API_SECRET=your_secret
 GOOGLE_GENERATIVE_AI_API_KEY=your_gemini_key
 BLOB_READ_WRITE_TOKEN=your_vercel_blob_token   # auto-added by Vercel when you add Blob storage
 ```
+

@@ -1,5 +1,5 @@
 export interface ScanState {
-  status: "idle" | "running" | "paused" | "completed" | "error";
+  status: "idle" | "running" | "completed" | "error";
   offset: number;
   total: number;
   availableCount: number;

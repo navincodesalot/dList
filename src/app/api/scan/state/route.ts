@@ -39,16 +39,6 @@ export async function POST(request: Request) {
       return NextResponse.json(newState);
     }
 
-    if (body.action === "pause") {
-      const newState: ScanState = {
-        ...state,
-        status: "paused",
-        updatedAt: new Date().toISOString(),
-      };
-      await setScanState(newState);
-      return NextResponse.json(newState);
-    }
-
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   } catch (error) {
     console.error("Update scan state error:", error);
