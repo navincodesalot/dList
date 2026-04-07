@@ -3,6 +3,8 @@ import "@/styles/globals.css";
 import { type Metadata } from "next";
 import { Geist } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { Toaster } from "@/components/ui/sonner";
 
 export const metadata: Metadata = {
   title: "dList — Short Domain Checker",
@@ -28,7 +30,10 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          {children}
+          <TooltipProvider delay={200}>
+            {children}
+          </TooltipProvider>
+          <Toaster position="bottom-center" richColors />
         </ThemeProvider>
       </body>
     </html>

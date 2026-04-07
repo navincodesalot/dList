@@ -36,6 +36,13 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { toast } from "sonner";
+import { Check, Copy, ExternalLink } from "lucide-react";
 import type { AvailableDomain } from "@/lib/types";
 
 interface ResultsResponse {
@@ -48,6 +55,79 @@ interface ResultsResponse {
 
 export interface DomainTableHandle {
   refresh: () => void;
+}
+
+/** Clickable domain name that copies to clipboard with a tooltip + toast. */
+function CopyDomainCell({ domain }: { domain: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(domain);
+    setCopied(true);
+    toast.success(`Copied ${domain}`, { duration: 2000 });
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        onClick={() => void handleCopy()}
+        className="group flex items-center gap-1.5 font-mono font-medium transition-colors hover:text-primary"
+      >
+        <span>{domain}</span>
+        <span className="text-muted-foreground opacity-0 transition-all duration-150 group-hover:opacity-100">
+          {copied ? (
+            <Check className="h-3.5 w-3.5 text-green-500" />
+          ) : (
+            <Copy className="h-3.5 w-3.5" />
+          )}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="right">
+        {copied ? "Copied!" : "Click to copy"}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Price cell — shows price if available, otherwise links to Spaceship search. */
+function PriceCell({
+  domain,
+  registerPrice,
+  currency,
+}: {
+  domain: string;
+  registerPrice: number | null;
+  currency: string | null;
+}) {
+  if (registerPrice !== null) {
+    return (
+      <span>
+        ${registerPrice.toFixed(2)} {(currency ?? "").toUpperCase()}
+      </span>
+    );
+  }
+
+  const searchUrl = `https://www.spaceship.com/domain-search/?query=${encodeURIComponent(domain)}&tab=domains`;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <a
+            href={searchUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-muted-foreground hover:text-primary flex items-center gap-1 transition-colors underline-offset-4 hover:underline"
+          >
+            Check price
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        }
+      />
+      <TooltipContent side="right">Search on Spaceship</TooltipContent>
+    </Tooltip>
+  );
 }
 
 /** Page numbers + ellipsis for large page counts (shadcn-style). */
@@ -96,7 +176,14 @@ export const DomainTable = forwardRef<DomainTableHandle>(
 
     useLayoutEffect(() => {
       setPage(1);
-    }, [tldFilter, lengthFilter, premiumFilter, debouncedSearch, sortBy, sortDir]);
+    }, [
+      tldFilter,
+      lengthFilter,
+      premiumFilter,
+      debouncedSearch,
+      sortBy,
+      sortDir,
+    ]);
 
     const fetchResults = useCallback(async () => {
       setLoading(true);
@@ -296,8 +383,8 @@ export const DomainTable = forwardRef<DomainTableHandle>(
               ) : (
                 domains.map((d) => (
                   <TableRow key={d.domain}>
-                    <TableCell className="font-mono font-medium">
-                      {d.domain}
+                    <TableCell>
+                      <CopyDomainCell domain={d.domain} />
                     </TableCell>
                     <TableCell>.{d.tld}</TableCell>
                     <TableCell>{d.length}</TableCell>
@@ -309,9 +396,11 @@ export const DomainTable = forwardRef<DomainTableHandle>(
                       )}
                     </TableCell>
                     <TableCell>
-                      {d.registerPrice
-                        ? `$${d.registerPrice.toFixed(2)} ${d.currency ?? ""}`
-                        : "—"}
+                      <PriceCell
+                        domain={d.domain}
+                        registerPrice={d.registerPrice}
+                        currency={d.currency}
+                      />
                     </TableCell>
                   </TableRow>
                 ))
@@ -356,9 +445,7 @@ export const DomainTable = forwardRef<DomainTableHandle>(
                 <PaginationItem>
                   <PaginationNext
                     disabled={loading || page >= totalPages}
-                    onClick={() =>
-                      setPage((p) => Math.min(totalPages, p + 1))
-                    }
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                   />
                 </PaginationItem>
               </PaginationContent>
